@@ -33,7 +33,6 @@ import qualified LtsHaskell as LH
 run :: IO ()
 run = do
   opts <- execParser pinfo
-  hackageDb <- loadHackageDB (opts ^. optHackageDb) Nothing
   let
     -- With optparse-applicative it seems there's no way to make
     -- 'StackageOptions' optional for Stackage override and required in
@@ -46,6 +45,7 @@ run = do
   case opts ^. optConfigOrigin of
     -- Generate Stackage packages from stack.yaml resolver
     OriginStackYaml stackYaml buildTarget -> do
+      hackageDb <- loadHackageDB (opts ^. optHackageDb) Nothing
       stackConf <- either fail pure =<< readStackConfig stackYaml
       let
         stackResolver = stackConf ^. scResolver
@@ -63,7 +63,7 @@ run = do
 
       case buildTarget of
         TargetStackageClosure -> do
-          (buildPlanFile, buildPlan, packageSetConfig) <- loadStackageBuildPlan hackageDb stackResolver opts sopts
+          (buildPlanFile, buildPlan, packageSetConfig) <- loadStackageBuildPlan (Just hackageDb) stackResolver opts sopts
           let
             overrideConfig = mkOverrideConfig opts (siGhcVersion $ bpSystemInfo buildPlan)
             stackageSetConfig = if opts ^. optTweaks . tExtraDepsRevisionLatest
@@ -96,7 +96,7 @@ run = do
             $ PP.overrideHaskellPackages overrideConfig (view nodeDerivation <$> stackConfAllPackages)
 
         TargetStackagePackages -> do
-          (buildPlanFile, buildPlan, packageSetConfig) <- loadStackageBuildPlan hackageDb stackResolver opts sopts
+          (buildPlanFile, buildPlan, packageSetConfig) <- loadStackageBuildPlan (Just hackageDb) stackResolver opts sopts
           let
             overrideConfig = mkOverrideConfig opts (siGhcVersion $ bpSystemInfo buildPlan)
             stackageSetConfig = if opts ^. optTweaks . tExtraDepsRevisionLatest
@@ -126,7 +126,7 @@ run = do
 
     -- Generate Stackage packages from resolver
     OriginResolver stackResolver -> do
-      (buildPlanFile, buildPlan, packageSetConfig) <- loadStackageBuildPlan hackageDb stackResolver opts sopts
+      (buildPlanFile, buildPlan, packageSetConfig) <- loadStackageBuildPlan Nothing stackResolver opts sopts
       nodes <- buildStackagePackages packageSetConfig buildPlan
       let overrideConfig = mkOverrideConfig opts (siGhcVersion $ bpSystemInfo buildPlan)
       writeOutFile buildPlanFile (opts ^. optOutStackagePackages)
@@ -136,7 +136,7 @@ run = do
       writeOutFile buildPlanFile (opts ^. optOutDerivation)
         $ PP.pPrintHaskellPackages overrideConfig
 
-loadStackageBuildPlan :: DB.HackageDB -> StackResolver -> Options -> StackageOptions -> IO (FilePath, BuildPlan, PackageSetConfig)
+loadStackageBuildPlan :: Maybe DB.HackageDB -> StackResolver -> Options -> StackageOptions -> IO (FilePath, BuildPlan, PackageSetConfig)
 loadStackageBuildPlan hackageDb stackResolver opts sopts = do
   let buildPlanFile = LH.buildPlanFilePath (sopts ^. soptLtsHaskellRepo) stackResolver
   buildPlan <- LH.loadBuildPlan buildPlanFile

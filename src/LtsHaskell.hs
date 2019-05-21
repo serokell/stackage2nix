@@ -39,7 +39,9 @@ getPackageFromRepo allCabalHashesPath mSha1Hash pkgId = do
   (pkgDesc, _) <- case mSha1Hash of
     Just sha1 ->
       readPackageByHash allCabalHashesPath sha1
-      `catchAll` const (readPackageByName allCabalHashesPath pkgId)
+      `catchAll` \x -> do
+        putStrLn $ "warning: getPackageFromRepo " <> (show x) <> " while looking up " <> show pkgId <> ", trying newest revision"
+        readPackageByName allCabalHashesPath pkgId
     Nothing   -> readPackageByName allCabalHashesPath pkgId
   meta <- readPackageMeta allCabalHashesPath pkgId
   let
@@ -54,10 +56,12 @@ getPackageFromDb hackageDb pkgId =
   getStackPackageFromDb hackageDb
   $ StackPackage (PlIndex $ PackageIndex (T.pack $ Text.display pkgId) Nothing) True Nothing
 
-loadPackage :: DB.HackageDB -> FilePath -> Maybe SHA1Hash -> PackageIdentifier -> IO Package
+loadPackage :: Maybe DB.HackageDB -> FilePath -> Maybe SHA1Hash -> PackageIdentifier -> IO Package
 loadPackage hackageDb allCabalHashesPath mSha1Hash pkgId =
-  getPackageFromRepo allCabalHashesPath mSha1Hash pkgId
-  `catchIOError` const (getPackageFromDb hackageDb pkgId)
+  case hackageDb of
+    Just hdb -> getPackageFromRepo allCabalHashesPath mSha1Hash pkgId
+                   `catchIOError` const (getPackageFromDb hdb pkgId)
+    Nothing -> getPackageFromRepo allCabalHashesPath mSha1Hash pkgId
 
 ghcCompilerInfo :: Version -> CompilerInfo
 ghcCompilerInfo v = CompilerInfo
@@ -73,7 +77,7 @@ buildPlanContainsDependency packageVersions (Dependency depName versionRange) =
   maybe False (`withinRange` versionRange) $ Map.lookup depName packageVersions
 
 buildPackageSetConfig
-  :: DB.HackageDB
+  :: Maybe DB.HackageDB
   -> FilePath
   -> FilePath
   -> BuildPlan
