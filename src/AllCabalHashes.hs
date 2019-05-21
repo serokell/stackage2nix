@@ -48,19 +48,23 @@ readPackageByHash repoDir sha1Hash = do
 readPackageByName :: FilePath -> PackageIdentifier -> IO (GenericPackageDescription, SHA256Hash)
 readPackageByName repoDir (PackageIdentifier name version) = do
   let cabalFile = unPackageName name </> display version </> unPackageName name <.> "cabal"
+  buf <- readFileFromRepo repoDir cabalFile
+  parseCabal cabalFile buf
+
+readFileFromRepo :: FilePath -> FilePath -> IO BS.ByteString
+readFileFromRepo repoDir relativeFile = do
   let repoOpts = defaultRepositoryOptions { repoPath = repoDir }
   repo <- openLgRepository repoOpts
-  buf <- runLgRepository repo $ do
-    headCommit <- resolveReference "HEAD" >>= \case
-      Nothing -> fail "Failed to parse HEAD ref"
+  runLgRepository repo $ do
+    headCommit <- resolveReference "refs/heads/hackage" >>= \case
+      Nothing -> fail "Failed to parse 'hackage' ref"
       Just oid -> lookupCommit $ Tagged oid
-    blobOid <- commitTreeEntry headCommit (B8.pack cabalFile) >>= \case
-      Nothing -> fail (cabalFile ++ ": no such file at HEAD")
+    blobOid <- commitTreeEntry headCommit (B8.pack relativeFile) >>= \case
+      Nothing -> fail (relativeFile ++ ": no such file in branch 'hackage'")
       Just (BlobEntry oid PlainBlob) -> pure oid
-      Just (BlobEntry _ _) -> fail (cabalFile ++ " is not a plain blob")
-      _ -> fail (cabalFile ++ " points to a non-blob!")
+      Just (BlobEntry _ _) -> fail (relativeFile ++ " is not a plain blob")
+      _ -> fail (relativeFile ++ " points to a non-blob!")
     catBlob blobOid
-  parseCabal cabalFile buf
 
 parseCabal :: String -> BS.ByteString -> IO (GenericPackageDescription, SHA256Hash)
 parseCabal what blob = do
@@ -80,9 +84,9 @@ setCabalFileHash hash cabal = cabal
   }
 
 readPackageMeta :: FilePath -> PackageIdentifier -> IO Meta
-readPackageMeta dirPrefix (PackageIdentifier name version) = do
-  let metaFile = dirPrefix </> unPackageName name </> display version </> unPackageName name <.> "json"
-  buf <- BS.readFile metaFile
+readPackageMeta repoDir (PackageIdentifier name version) = do
+  let metaFile = unPackageName name </> display version </> unPackageName name <.> "json"
+  buf <- readFileFromRepo repoDir metaFile
   case eitherDecodeStrict buf of
     Left msg -> fail (metaFile ++ ": " ++ msg)
     Right x  -> return $ over (mHashes . ix "SHA256") (printSHA256 . packHex) x
